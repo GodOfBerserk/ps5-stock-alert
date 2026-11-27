@@ -2,7 +2,7 @@ name: PS5 stock check
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 min (GitHub often runs it later than this)
+    - cron: "*/5 * * * *"   # every 5 min (GitHub often runs it later than this) - schedule refresh
   workflow_dispatch:
     inputs:
       test:
