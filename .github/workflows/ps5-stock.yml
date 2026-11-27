@@ -1,0 +1,51 @@
+name: PS5 stock check
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 min (GitHub often runs it later than this)
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Send a test message to Discord"
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check PlayStation Direct and alert Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TEST: ${{ inputs.test }}
+        run: |
+          PAGE="https://direct.playstation.com/en-us/buy-consoles/playstation5-digital-edition-console-825-gb"
+          API="https://api.direct.playstation.com/commercewebservices/ps-direct-us/users/anonymous/products/productList?fields=BASIC&productCodes=1000049898"
+
+          send() {
+            jq -n --arg c "$1" '{content:$c, allowed_mentions:{parse:["everyone"]}}' \
+              | curl -sS -X POST -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK"
+          }
+
+          if [ "$TEST" = "true" ]; then
+            send "**PS5 cloud alert test**: the GitHub checker is connected. $PAGE"
+          fi
+
+          JSON=$(curl -sS --max-time 20 \
+            -H "Origin: https://direct.playstation.com" \
+            -H "Referer: https://direct.playstation.com/" \
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36" \
+            "$API") || { echo "Request failed"; exit 1; }
+
+          STATUS=$(echo "$JSON" | jq -r '.products[0].stock.stockLevelStatus // "unknown"')
+          PRICE=$(echo "$JSON" | jq -r '.products[0].price.value // "?"')
+          echo "Status: $STATUS  Price: $PRICE"
+
+          if [ "$STATUS" = "unknown" ]; then
+            echo "Could not read stock status"; exit 1
+          fi
+
+          if [ "$STATUS" != "outOfStock" ]; then
+            send "@everyone **PS5 IN STOCK!** (cloud check) Status: $STATUS at \$$PRICE. Go now: $PAGE"
+          fi
