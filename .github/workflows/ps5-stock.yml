@@ -43,39 +43,22 @@ jobs:
           fi
 
           # --- Amazon (only Amazon's own Add to Cart; ignores third-party sellers) ---
+          # Amazon sometimes serves a robot-check page, so try up to 3 times.
           AMZ_PAGE="https://www.amazon.com/dp/B0FRGMYJMG?th=1"
-          HTML=$(curl -sS -L --compressed --max-time 20 -A "$UA" -H "Accept-Language: en-US,en;q=0.9" "$AMZ_PAGE" || true)
-          if ! grep -q 'id="productTitle"' <<<"$HTML"; then
-            AMZ=blocked
-          elif grep -q 'id="add-to-cart-button"' <<<"$HTML" && ! grep -q 'Currently unavailable' <<<"$HTML"; then
-            AMZ=inStock
-          else
-            AMZ=outOfStock
-          fi
-          echo "Amazon: $AMZ"
+          AMZ=blocked
+          for i in 1 2 3; do
+            HTML=$(curl -sS -L --compressed --max-time 20 -A "$UA" -H "Accept-Language: en-US,en;q=0.9" "$AMZ_PAGE" || true)
+            if grep -q 'id="productTitle"' <<<"$HTML"; then
+              if grep -q 'id="add-to-cart-button"' <<<"$HTML" && ! grep -q 'Currently unavailable' <<<"$HTML"; then
+                AMZ=inStock
+              else
+                AMZ=outOfStock
+              fi
+              break
+            fi
+            sleep $((RANDOM % 5 + 4))
+          done
+          echo "Amazon: $AMZ (attempts: $i)"
           if [ "$AMZ" = "inStock" ]; then
             send "@everyone **PS5 IN STOCK at Amazon!** (cloud check) Go now: $AMZ_PAGE"
-          fi
-
-          # --- Best Buy (sold & shipped by Best Buy, SKU 12472949) ---
-          BB_PAGE="https://www.bestbuy.com/product/playstation-5-slim-digital-edition-console-825gb/JXHQ37TYYL/sku/12472949"
-          BB_HTML=$(curl -sS -L --http2 --compressed --max-time 25 -A "$UA" \
-            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-            -H "Accept-Language: en-US,en;q=0.9" \
-            -H "Sec-Fetch-Dest: document" -H "Sec-Fetch-Mode: navigate" -H "Sec-Fetch-Site: none" \
-            -H "Upgrade-Insecure-Requests: 1" \
-            "$BB_PAGE" || true)
-          echo "Best Buy debug: bytes=${#BB_HTML} SOLD_OUT=$(grep -o 'SOLD_OUT' <<<"$BB_HTML" | wc -l) ADD_TO_CART=$(grep -o 'ADD_TO_CART' <<<"$BB_HTML" | wc -l) SoldOutText=$(grep -o 'Sold Out' <<<"$BB_HTML" | wc -l) AddToCartText=$(grep -o 'Add to Cart' <<<"$BB_HTML" | wc -l)"
-          if ! grep -q '12472949' <<<"$BB_HTML"; then
-            BB=blocked
-          elif grep -q 'SOLD_OUT\|Sold Out' <<<"$BB_HTML"; then
-            BB=outOfStock
-          elif grep -q 'ADD_TO_CART\|Add to Cart' <<<"$BB_HTML"; then
-            BB=inStock
-          else
-            BB=unknown
-          fi
-          echo "Best Buy: $BB"
-          if [ "$BB" = "inStock" ]; then
-            send "@everyone **PS5 IN STOCK at Best Buy!** (cloud check) Go now: $BB_PAGE"
           fi
