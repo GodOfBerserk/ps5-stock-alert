@@ -15,13 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Check PlayStation Direct and alert Discord
+      - name: Check stores and alert Discord
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           TEST: ${{ inputs.test }}
         run: |
-          PAGE="https://direct.playstation.com/en-us/buy-consoles/playstation5-digital-edition-console-825-gb"
-          API="https://api.direct.playstation.com/commercewebservices/ps-direct-us/users/anonymous/products/productList?fields=BASIC&productCodes=1000049898"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
 
           send() {
             jq -n --arg c "$1" '{content:$c, allowed_mentions:{parse:["everyone"]}}' \
@@ -29,23 +28,31 @@ jobs:
           }
 
           if [ "$TEST" = "true" ]; then
-            send "**PS5 cloud alert test**: the GitHub checker is connected. $PAGE"
+            send "**PS5 cloud alert test**: the GitHub checker is connected (PlayStation Direct + Amazon)."
           fi
 
-          JSON=$(curl -sS --max-time 20 \
-            -H "Origin: https://direct.playstation.com" \
-            -H "Referer: https://direct.playstation.com/" \
-            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36" \
-            "$API") || { echo "Request failed"; exit 1; }
-
-          STATUS=$(echo "$JSON" | jq -r '.products[0].stock.stockLevelStatus // "unknown"')
-          PRICE=$(echo "$JSON" | jq -r '.products[0].price.value // "?"')
-          echo "Status: $STATUS  Price: $PRICE"
-
-          if [ "$STATUS" = "unknown" ]; then
-            echo "Could not read stock status"; exit 1
+          # --- PlayStation Direct ---
+          PS_PAGE="https://direct.playstation.com/en-us/buy-consoles/playstation5-digital-edition-console-825-gb"
+          PS_API="https://api.direct.playstation.com/commercewebservices/ps-direct-us/users/anonymous/products/productList?fields=BASIC&productCodes=1000049898"
+          PS=$(curl -sS --max-time 20 -A "$UA" \
+            -H "Origin: https://direct.playstation.com" -H "Referer: https://direct.playstation.com/" \
+            "$PS_API" | jq -r '.products[0].stock.stockLevelStatus // "unknown"' 2>/dev/null || echo error)
+          echo "PlayStation Direct: $PS"
+          if [ -n "$PS" ] && [ "$PS" != "outOfStock" ] && [ "$PS" != "unknown" ] && [ "$PS" != "error" ]; then
+            send "@everyone **PS5 IN STOCK at PlayStation Direct!** (cloud check) Status: $PS. Go now: $PS_PAGE"
           fi
 
-          if [ "$STATUS" != "outOfStock" ]; then
-            send "@everyone **PS5 IN STOCK!** (cloud check) Status: $STATUS at \$$PRICE. Go now: $PAGE"
+          # --- Amazon (only Amazon's own Add to Cart; ignores third-party sellers) ---
+          AMZ_PAGE="https://www.amazon.com/dp/B0FRGMYJMG?th=1"
+          HTML=$(curl -sS -L --compressed --max-time 20 -A "$UA" -H "Accept-Language: en-US,en;q=0.9" "$AMZ_PAGE" || true)
+          if ! grep -q 'id="productTitle"' <<<"$HTML"; then
+            AMZ=blocked
+          elif grep -q 'id="add-to-cart-button"' <<<"$HTML" && ! grep -q 'Currently unavailable' <<<"$HTML"; then
+            AMZ=inStock
+          else
+            AMZ=outOfStock
+          fi
+          echo "Amazon: $AMZ"
+          if [ "$AMZ" = "inStock" ]; then
+            send "@everyone **PS5 IN STOCK at Amazon!** (cloud check) Go now: $AMZ_PAGE"
           fi
